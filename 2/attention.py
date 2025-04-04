@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn 
 import torch.nn.functional as F
 
-def rotate_half(x):
+def rotate_half(x: torch.Tensor):
     """
     Rotates the left half of a tensor along its final dimension.
 
@@ -24,11 +24,16 @@ def rotate_half(x):
     """
     # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
     # WRITE YOUR CODE HERE 
-    
+    head_dim = x.size(dim=-1)
+    if head_dim % 2 != 0:
+        raise ValueError(f"head_dim must be even, but got {head_dim}")
+    x_left, x_right = x[..., :head_dim // 2], -x[..., head_dim // 2:]
 
-    pass
+    # swaping and concatentaion
+    x_concatenated = torch.cat((x_right, x_left),dim=-1)
+    return x_concatenated
 
-def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=None):
+def apply_rotary_pos_emb(q, k, cos: torch.Tensor, sin: torch.Tensor, position_ids=None, unsqueeze_dim=None):
     """
     Applies Rotary Positional Embeddings (RoPE) to the query and key tensors.
 
@@ -53,20 +58,40 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=None):
     # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
     # WRITE CODE HERE
 
-    pass
+    # need to unsqueeze cos and sine if needed
+    if unsqueeze_dim is not None:
+        sin = sin.unsqueeze(unsqueeze_dim)
+        cos = cos.unsqueeze(unsqueeze_dim)
+    
+    half_rotated_q, half_rotated_k = rotate_half(q), rotate_half(k)
+    # print(cos.shape, sin.shape)
+    # print(q.shape)
+    q_rotated = q * cos + half_rotated_q * sin
+    k_rotated = k * cos + half_rotated_k * sin
+    return (q_rotated, k_rotated)
 
 class RotaryEmbedder(nn.Module):
     def __init__(self, dim, base):
         super().__init__()
         # ===================== DO NOT CHANGE THE INIT FUNCTION! =====================
         # Precompute frequency for sine/cosine embeddings
-        self.freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+        self.freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))  # shape = head_dim//2
 
     @torch.no_grad()
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         # WRITE CODE HERE 
-        
-        pass
+        batch_size, seq_len, _ = x.shape
+        position_ids = torch.arange(seq_len, device=x.device).unsqueeze(0).expand(batch_size, seq_len)
+        pos_ids_expanded = position_ids[:,None,:]  # batch, 1, seq
+
+        freq_expanded = self.freq[None, :, None]   # 1, head//2, 1
+        freq_expanded = freq_expanded.expand(pos_ids_expanded.shape[0],-1,1)  # batch, head//2, 1
+
+        angles = freq_expanded.float() @ pos_ids_expanded.float()   # batch, head//2, seq 
+        angles = angles.transpose(1,2)  # batch, seq, head//2 
+        embeddings = torch.cat((angles,angles), dim=-1)    # batch_size, seq_len, head_dim
+
+        return embeddings.sin(), embeddings.cos()
 
 class GroupedQueryAttention(nn.Module):
     def __init__(self, config):
@@ -88,7 +113,7 @@ class GroupedQueryAttention(nn.Module):
         # Rotary embedding generator
         self.rotary_emb = RotaryEmbedder(base=self.rope_theta, dim=self.head_dim)
     
-    def _repeat_kv(self, x, n_rep):
+    def _repeat_kv(self, x: torch.Tensor, n_rep: int):
         """
         Expands the number of key-value attention heads by repeating them.
 
@@ -105,11 +130,38 @@ class GroupedQueryAttention(nn.Module):
                         where each key-value head is repeated `n_rep` times.
         """
         # WRITE CODE HERE 
+        _, num_key_value_heads, _, _ = x.shape
+        return x.repeat(1,num_key_value_heads*n_rep,1,1)
         
-        pass
 
 
     def forward(self, x: torch.Tensor, attention_mask=None):
         # WRITE YOUR CODE HERE
+        # x = batch, seq_len, emb_dim
+        batch_size, seq_len, _ = x.shape
+
+        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+
+        hidden_kv_shape = (batch_size, seq_len, self.kv_heads, self.head_dim)
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1,2)
+        k = k.view(*hidden_kv_shape).transpose(1,2)
+        v = v.view(*hidden_kv_shape).transpose(1,2)        # batch_size, heads, seq_len, head_dim
+
+        sin, cos = self.rotary_emb(x)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin, None, unsqueeze_dim=1)  # batch_size, heads, seq_len, head_dim
+
+        n_rep = self.num_heads//self.kv_heads
+        keys = self._repeat_kv(k, n_rep)        # batch, num_key_value_heads * n_rep, seq_len, head_dim
+        values = self._repeat_kv(v, n_rep)
+
+        scores = torch.matmul(q, keys.transpose(2,3)) / math.sqrt(self.head_dim)  # batch, heads, seq_len, seq_len
+
+        if attention_mask is not None:
+            scores = scores + attention_mask
+        scores = F.softmax(scores.float(), dim=-1)
+
+        H = torch.matmul(scores, values)   #  batch, heads, seq_len, head_dim
+
+        o = self.o_proj(H.transpose(1,2).view(batch_size,seq_len,-1))  # batch, seq_len, emb_dim same shape as input to forward func
         
-        pass
+        return o

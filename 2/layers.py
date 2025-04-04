@@ -26,11 +26,11 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))  # Learnable scaling factor
         self.variance_epsilon = eps
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
-        
-        pass
+        # batch, seqlen, emb_dim
+        return x / (x.square().mean(dim=-1, keepdim=True)+self.variance_epsilon).sqrt() * self.weight
 
 class MLP(nn.Module):
     def __init__(self, hidden_size, intermediate_size):
@@ -64,8 +64,11 @@ class MLP(nn.Module):
     def forward(self, x):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
-
-        pass
+        xW = self.gate_proj(x)
+        gate = self.activation(xW)
+        xV = self.up_proj(x)
+        
+        return self.down_proj(gate * xV)
         
     
 class LlamaDecoder(nn.Module):
@@ -88,5 +91,14 @@ class LlamaDecoder(nn.Module):
     def forward(self, x, attention_mask):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
+        batch, seq_len, emb_dim = x.shape
+        residual = x
+        hidden_state = self.input_layernorm(x)
+
+        attention_output = self.self_attn(hidden_state, attention_mask)
+
+        hidden_state = residual + attention_output
+        
+
         
         pass
