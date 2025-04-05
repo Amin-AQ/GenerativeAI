@@ -91,14 +91,16 @@ class LlamaDecoder(nn.Module):
     def forward(self, x, attention_mask):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
-        batch, seq_len, emb_dim = x.shape
         residual = x
         hidden_state = self.input_layernorm(x)
 
         attention_output = self.self_attn(hidden_state, attention_mask)
-
         hidden_state = residual + attention_output
-        
+        residual = hidden_state
 
-        
-        pass
+        hidden_state = self.post_attention_layernorm(hidden_state)
+        mlp_output = self.mlp(hidden_state)
+         
+        hidden_state = mlp_output + residual
+
+        return hidden_state

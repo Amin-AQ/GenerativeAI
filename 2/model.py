@@ -22,8 +22,13 @@ class smolModel(nn.Module):
     def forward(self, input_ids=None, attention_mask=None):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
+        embeddings = self.embed_tokens(input_ids)
+
+        for layer in self.layers:
+            embeddings = layer(embeddings, attention_mask)
         
-        pass
+        return self.norm(embeddings)
+        
     
 class smolLM(nn.Module):
     # ===================== DO NOT CHANGE THE INIT FUNCTION! =====================
@@ -44,13 +49,13 @@ class smolLM(nn.Module):
     def tie_weights(self):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
-
-        pass
+        self.lm_head.weight = self.model.embed_tokens.weight
+    
 
     def forward(self, input_ids, attention_mask):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
-
-        logits = None
+        hidden_states = self.model(input_ids, attention_mask)
+        logits = self.lm_head(hidden_states)
         
         return {'logits': logits}

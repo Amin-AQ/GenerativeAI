@@ -130,8 +130,11 @@ class GroupedQueryAttention(nn.Module):
                         where each key-value head is repeated `n_rep` times.
         """
         # WRITE CODE HERE 
-        _, num_key_value_heads, _, _ = x.shape
-        return x.repeat(1,num_key_value_heads*n_rep,1,1)
+        batch, num_key_value_heads, seq_len, head_dim = x.shape
+        x = x.unsqueeze(2)  # (batch, key_value_heads, 1, seq_len, head_dim)
+        x = x.repeat(1, 1, n_rep, 1, 1)  # (batch, key_value_heads, n_rep, seq_len, head_dim)
+        x = x.view(batch, num_key_value_heads * n_rep, seq_len, head_dim)  # (batch, num_heads, seq_len, head_dim)
+        return x
         
 
 
@@ -157,11 +160,15 @@ class GroupedQueryAttention(nn.Module):
         scores = torch.matmul(q, keys.transpose(2,3)) / math.sqrt(self.head_dim)  # batch, heads, seq_len, seq_len
 
         if attention_mask is not None:
-            scores = scores + attention_mask
+            causal_mask = torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(0)  # (1, 1, seq, seq)
+            tokenizer_mask = attention_mask[:, None, None, :]  # (batch, 1, 1, seq)
+            attention_mask = causal_mask * tokenizer_mask  # (batch, 1, seq, seq)
+            scores = scores.masked_fill(attention_mask == 0, float('-inf'))
+
         scores = F.softmax(scores.float(), dim=-1)
 
         H = torch.matmul(scores, values)   #  batch, heads, seq_len, head_dim
 
-        o = self.o_proj(H.transpose(1,2).view(batch_size,seq_len,-1))  # batch, seq_len, emb_dim same shape as input to forward func
+        o = self.o_proj(H.transpose(1,2).contiguous().view(batch_size,seq_len,-1))  # batch, seq_len, emb_dim same shape as input to forward func
         
         return o
