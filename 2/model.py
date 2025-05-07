@@ -55,6 +55,7 @@ class smolLM(nn.Module):
     def forward(self, input_ids, attention_mask):
         # ===================== DO NOT CHANGE THE FUNCTION ARGUMENTS! =====================
         # WRITE YOUR CODE HERE
+        #print(attention_mask.shape)
         hidden_states = self.model(input_ids, attention_mask)
         logits = self.lm_head(hidden_states)
         
